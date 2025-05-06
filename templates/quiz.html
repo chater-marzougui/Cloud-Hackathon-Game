@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Clash: Sudden Deployment - Quiz</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="container quiz-container">
+        <header>
+            <h1>☁️ Cloud Clash: Sudden Deployment</h1>
+        </header>
+
+        <div class="game-info">
+            <div class="player-info">
+                <div id="player-id">Player: <span></span></div>
+                <div id="player-score">Score: <span>0</span></div>
+            </div>
+            <div class="question-counter">
+                Question: <span id="question-number">0</span>/45
+            </div>
+        </div>
+
+        <div class="quiz-area">
+            <div class="waiting-message" id="waiting-message">
+                <h2>Waiting for the game to start...</h2>
+                <div class="loader"></div>
+            </div>
+
+            <div class="question-area hidden" id="question-area">
+                <h2 id="question-text">Loading question...</h2>
+                
+                <div class="options-container" id="options-container">
+                    <!-- Options will be displayed here -->
+                </div>
+                
+                <div id="answer-input-container" class="answer-input-container hidden">
+                    <input type="text" id="answer-input" placeholder="Type your answer here...">
+                    <button id="submit-answer" class="btn">Submit</button>
+                </div>
+            </div>
+
+            <div class="feedback-area" id="feedback-area">
+                <!-- Feedback messages will appear here -->
+            </div>
+        </div>
+
+        <div class="action-area">
+            <button id="submit-btn" class="btn large-btn hidden">Submit Answer</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const socket = io();
+            
+            // Elements
+            const playerIdElement = document.querySelector('#player-id span');
+            const playerScoreElement = document.querySelector('#player-score span');
+            const questionNumberElement = document.getElementById('question-number');
+            const questionTextElement = document.getElementById('question-text');
+            const optionsContainer = document.getElementById('options-container');
+            const answerInputContainer = document.getElementById('answer-input-container');
+            const answerInput = document.getElementById('answer-input');
+            const submitAnswerBtn = document.getElementById('submit-answer');
+            const waitingMessage = document.getElementById('waiting-message');
+            const questionArea = document.getElementById('question-area');
+            const feedbackArea = document.getElementById('feedback-area');
+            
+            let currentScore = 0;
+            let hasAnswered = false;
+            let playerId = '';
+            
+            // Handle socket connection
+            socket.on('connect', function() {
+                console.log('Connected to server');
+                
+                // Get player ID from session or URL params if needed
+                // For simplicity, we'll assume it's stored in the session on the server side
+            });
+            
+            // Handle new question event
+            socket.on('new_question', function(data) {
+                // Hide waiting message, show question
+                waitingMessage.classList.add('hidden');
+                questionArea.classList.remove('hidden');
+                
+                // Reset state for new question
+                hasAnswered = false;
+                feedbackArea.innerHTML = '';
+                
+                // Display question information
+                questionNumberElement.textContent = data.question_number;
+                questionTextElement.textContent = data.question;
+                
+                // Display options if present
+                optionsContainer.innerHTML = '';
+                if (data.options && data.options.length > 0) {
+                    // Multiple choice question
+                    answerInputContainer.classList.add('hidden');
+                    optionsContainer.classList.remove('hidden');
+                    
+                    data.options.forEach(function(option, index) {
+                        const optionBtn = document.createElement('button');
+                        optionBtn.className = 'option-btn';
+                        optionBtn.textContent = option;
+                        optionBtn.dataset.answer = option;
+                        
+                        optionBtn.addEventListener('click', function() {
+                            if (!hasAnswered) {
+                                submitAnswer(option);
+                            }
+                        });
+                        
+                        optionsContainer.appendChild(optionBtn);
+                    });
+                } else {
+                    // Free text answer question
+                    optionsContainer.classList.add('hidden');
+                    answerInputContainer.classList.remove('hidden');
+                    answerInput.value = '';
+                    answerInput.focus();
+                }
+            });
+            
+            // Handle correct answer event
+            socket.on('correct_answer', function(data) {
+                const isCurrentPlayer = (data.player_id === playerId);
+                
+                // Disable answer input
+                disableAnswerInput();
+                
+                // Show feedback message
+                const feedbackMessage = document.createElement('div');
+                feedbackMessage.className = isCurrentPlayer ? 'feedback correct' : 'feedback info';
+                
+                if (isCurrentPlayer) {
+                    feedbackMessage.textContent = '✅ Correct! +1 point';
+                    currentScore += 1;
+                    playerScoreElement.textContent = currentScore;
+                } else {
+                    feedbackMessage.textContent = `${data.player_id} answered correctly: ${data.correct_answer}`;
+                }
+                
+                feedbackArea.appendChild(feedbackMessage);
+                
+                // Add highlight effect to the correct option if it's multiple choice
+                if (optionsContainer.children.length > 0) {
+                    Array.from(optionsContainer.children).forEach(btn => {
+                        if (btn.dataset.answer === data.correct_answer) {
+                            btn.classList.add('correct-option');
+                        }
+                    });
+                }
+            });
+            
+            // Handle wrong answer event
+            socket.on('wrong_answer', function(data) {
+                // Show feedback message
+                const feedbackMessage = document.createElement('div');
+                feedbackMessage.className = 'feedback wrong';
+                feedbackMessage.textContent = '❌ ' + data.message;
+                feedbackArea.appendChild(feedbackMessage);
+                
+                // Update score
+                currentScore -= 2; // -2 points for wrong answer
+                playerScoreElement.textContent = currentScore;
+            });
+            
+            // Handle too late event
+            socket.on('too_late', function(data) {
+                disableAnswerInput();
+                
+                const feedbackMessage = document.createElement('div');
+                feedbackMessage.className = 'feedback info';
+                feedbackMessage.textContent = '⏱ ' + data.message;
+                feedbackArea.appendChild(feedbackMessage);
+            });
+            
+            // Handle game over event
+            socket.on('game_over', function(data) {
+                window.location.href = '/leaderboard';
+            });
+            
+            // Handle submit answer button click
+            submitAnswerBtn.addEventListener('click', function() {
+                if (!hasAnswered) {
+                    submitAnswer(answerInput.value.trim());
+                }
+            });
+            
+            // Handle enter key in answer input
+            answerInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && !hasAnswered) {
+                    submitAnswer(answerInput.value.trim());
+                }
+            });
+            
+            // Function to submit answer
+            function submitAnswer(answer) {
+                if (!answer) return;
+                
+                hasAnswered = true;
+                
+                socket.emit('submit_answer', {
+                    answer: answer
+                });
+                
+                disableAnswerInput();
+            }
+            
+            // Function to disable answer input
+            function disableAnswerInput() {
+                // Disable multiple choice buttons
+                if (optionsContainer.children.length > 0) {
+                    Array.from(optionsContainer.children).forEach(btn => {
+                        btn.disabled = true;
+                        btn.classList.add('disabled');
+                    });
+                }
+                
+                // Disable text input
+                answerInput.disabled = true;
+                submitAnswerBtn.disabled = true;
+            }
+            
+            // Get player information (assumes it's stored in session)
+            fetch('/api/player-info')
+                .then(response => response.json())
+                .then(data => {
+                    playerId = data.player_id;
+                    playerIdElement.textContent = playerId;
+                })
+                .catch(error => {
+                    console.error('Error fetching player info:', error);
+                });
+        });
+    </script>
+</body>
+</html>

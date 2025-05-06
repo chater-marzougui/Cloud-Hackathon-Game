@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Clash: Admin Panel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+    <style>
+        .admin-container {
+            background-color: #1a1a1a;
+            color: #00ff00;
+            font-family: monospace;
+        }
+        
+        .admin-header {
+            background-color: #333;
+            padding: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .admin-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .admin-section {
+            background-color: #222;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        
+        .admin-section h3 {
+            margin-top: 0;
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 10px;
+        }
+        
+        .admin-button {
+            background-color: #333;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px 12px;
+            margin: 5px;
+            cursor: pointer;
+            font-family: monospace;
+        }
+        
+        .admin-button:hover {
+            background-color: #00ff00;
+            color: #000;
+        }
+        
+        .player-status {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            padding: 5px;
+            background-color: #2a2a2a;
+        }
+        
+        .admin-key-input {
+            background-color: #333;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px;
+            margin-bottom: 10px;
+            font-family: monospace;
+            width: 100%;
+        }
+        
+        .log-area {
+            background-color: #000;
+            color: #00ff00;
+            height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            font-family: monospace;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            border-bottom: 1px dotted #333;
+            padding-bottom: 5px;
+        }
+        
+        .timestamp {
+            color: #888;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container admin-container">
+        <div class="admin-header">
+            <h1>☁️ Cloud Clash: Admin Control Panel</h1>
+            <p>Security clearance required</p>
+        </div>
+        
+        <div class="admin-auth">
+            <input type="password" id="admin-key" class="admin-key-input" placeholder="Enter admin key">
+        </div>
+        
+        <div class="admin-panel">
+            <div class="admin-section">
+                <h3>Game Control</h3>
+                <button id="start-game-btn" class="admin-button">Force Start Game</button>
+                <button id="skip-question-btn" class="admin-button">Skip Current Question</button>
+                <button id="reset-game-btn" class="admin-button">Reset Game</button>
+                
+                <div class="game-status-section">
+                    <h3>Game Status</h3>
+                    <div id="game-status">Waiting for connection...</div>
+                    <div id="current-question">Question: N/A</div>
+                </div>
+            </div>
+            
+            <div class="admin-section">
+                <h3>Player Status</h3>
+                <div id="player-statuses">
+                    <!-- Player statuses will be populated here -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="log-area" id="log-area">
+            <!-- Log entries will be added here -->
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const socket = io();
+            const adminKey = document.getElementById('admin-key');
+            const startGameBtn = document.getElementById('start-game-btn');
+            const skipQuestionBtn = document.getElementById('skip-question-btn');
+            const resetGameBtn = document.getElementById('reset-game-btn');
+            const gameStatus = document.getElementById('game-status');
+            const currentQuestion = document.getElementById('current-question');
+            const playerStatuses = document.getElementById('player-statuses');
+            const logArea = document.getElementById('log-area');
+            
+            let players = [];
+            let scores = {};
+            
+            // Handle socket connection
+            socket.on('connect', function() {
+                addLogEntry('Connected to server');
+                socket.emit('admin_connect');
+            });
+            
+            // Handle player joined event
+            socket.on('player_joined', function(data) {
+                players = data.players;
+                updatePlayerStatuses();
+                addLogEntry(`Player joined: ${data.player_id}`);
+            });
+            
+            // Handle all players ready
+            socket.on('all_players_ready', function() {
+                gameStatus.textContent = 'All players ready';
+                addLogEntry('All players are ready');
+            });
+            
+            // Handle new question event
+            socket.on('new_question', function(data) {
+                currentQuestion.textContent = `Question: ${data.question_number}/45`;
+                gameStatus.textContent = 'Game in progress';
+                addLogEntry(`New question #${data.question_number}: ${data.question}`);
+            });
+            
+            // Handle correct answer event
+            socket.on('correct_answer', function(data) {
+                addLogEntry(`Correct answer by ${data.player_id}: ${data.correct_answer}`);
+                scores[data.player_id] = (scores[data.player_id] || 0) + 1;
+                updatePlayerStatuses();
+            });
+            
+            // Handle wrong answer event (admin will see all wrong answers)
+            socket.on('admin_wrong_answer', function(data) {
+                addLogEntry(`Wrong answer by ${data.player_id}: ${data.answer}`);
+                scores[data.player_id] = (scores[data.player_id] || 0) - 2; // -2 for wrong answer
+                updatePlayerStatuses();
+            });
+            
+            // Handle game over event
+            socket.on('game_over', function() {
+                gameStatus.textContent = 'Game completed';
+                addLogEntry('Game over - Final scores available');
+            });
+            
+            // Handle game reset event
+            socket.on('game_reset', function() {
+                gameStatus.textContent = 'Game reset';
+                currentQuestion.textContent = 'Question: N/A';
+                scores = {};
+                updatePlayerStatuses();
+                addLogEntry('Game has been reset');
+            });
+            
+            // Handle start game button
+            startGameBtn.addEventListener('click', function() {
+                const key = adminKey.value;
+                if (!key) {
+                    alert('Please enter admin key');
+                    return;
+                }
+                
+                socket.emit('start_game', { admin_key: key });
+                addLogEntry('Starting game...');
+            });
+            
+            // Handle skip question button
+            skipQuestionBtn.addEventListener('click', function() {
+                const key = adminKey.value;
+                if (!key) {
+                    alert('Please enter admin key');
+                    return;
+                }
+                
+                socket.emit('admin_skip_question', { admin_key: key });
+                addLogEntry('Skipping question...');
+            });
+            
+            // Handle reset game button
+            resetGameBtn.addEventListener('click', function() {
+                const key = adminKey.value;
+                if (!key) {
+                    alert('Please enter admin key');
+                    return;
+                }
+                
+                if (confirm('Are you sure you want to reset the game? All progress will be lost.')) {
+                    socket.emit('admin_reset_game', { admin_key: key });
+                    addLogEntry('Resetting game...');
+                }
+            });
+            
+            // Function to update player statuses
+            function updatePlayerStatuses() {
+                playerStatuses.innerHTML = '';
+                
+                if (players.length === 0) {
+                    playerStatuses.innerHTML = '<div class="no-players">No players connected</div>';
+                    return;
+                }
+                
+                players.forEach(function(playerId) {
+                    const playerItem = document.createElement('div');
+                    playerItem.className = 'player-status';
+                    
+                    const score = scores[playerId] || 0;
+                    
+                    playerItem.innerHTML = `
+                        <span>${playerId}</span>
+                        <span>Score: ${score}</span>
+                    `;
+                    
+                    playerStatuses.appendChild(playerItem);
+                });
+            }
+            
+            // Function to add log entry
+            function addLogEntry(message) {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString();
+                
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                logEntry.innerHTML = `<span class="timestamp">[${timeString}]</span> ${message}`;
+                
+                logArea.appendChild(logEntry);
+                logArea.scrollTop = logArea.scrollHeight; // Auto-scroll to bottom
+            }
+            
+            // Initialize
+            updatePlayerStatuses();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Clash: Sudden Deployment - Lobby</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>☁️ Cloud Clash: Sudden Deployment</h1>
+            <h2>Pre-Game Lobby</h2>
+        </header>
+
+        <div class="lobby-container">
+            <div class="player-selection">
+                <h3>Select Your Player ID</h3>
+                <p class="note">Note: INDP2C players are excluded from this game.</p>
+                
+                <form id="join-form">
+                    <select id="player-id" required>
+                        <option value="" disabled selected>Choose your player ID</option>
+                        {% for player in valid_players %}
+                        <option value="{{ player }}">{{ player }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn">Join Game</button>
+                </form>
+                <div id="join-message" class="message"></div>
+            </div>
+
+            <div class="waiting-area">
+                <h3>Players Waiting (0/10)</h3>
+                <div class="player-list" id="player-list">
+                    <!-- Players will be displayed here -->
+                </div>
+
+                <div class="game-status">
+                    <div id="status-message">Waiting for all players to join...</div>
+                    <button id="start-game-btn" class="btn hidden">Start Game Now</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="game-rules">
+            <h3>Game Rules</h3>
+            <ul>
+                <li>10 players (excluding INDP2C)</li>
+                <li>45 questions, shown one at a time</li>
+                <li>First to answer correctly gets +1 point</li>
+                <li>Wrong answers: <strong>-2 points</strong></li>
+                <li>No answer: 0 points</li>
+                <li>Final leaderboard shown after all questions</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const socket = io();
+            const playerList = document.getElementById('player-list');
+            const joinForm = document.getElementById('join-form');
+            const joinMessage = document.getElementById('join-message');
+            const startGameBtn = document.getElementById('start-game-btn');
+            const playerCountHeader = document.querySelector('.waiting-area h3');
+            const statusMessage = document.getElementById('status-message');
+            
+            let connectedPlayers = [];
+            const validPlayers = {{ valid_players|tojson }};
+            const totalPlayers = validPlayers.length;
+
+            // Handle socket connection
+            socket.on('connect', function() {
+                console.log('Connected to server');
+            });
+
+            // Handle player joined event
+            socket.on('player_joined', function(data) {
+                connectedPlayers = data.players;
+                updatePlayerList();
+                
+                // Update the player count
+                playerCountHeader.textContent = `Players Waiting (${connectedPlayers.length}/${totalPlayers})`;
+                
+                if (connectedPlayers.length === totalPlayers) {
+                    statusMessage.textContent = 'All players have joined! Ready to start.';
+                    startGameBtn.classList.remove('hidden');
+                }
+            });
+
+            // Handle join error
+            socket.on('join_error', function(data) {
+                joinMessage.textContent = data.message;
+                joinMessage.className = 'message error';
+            });
+
+            // Handle all players ready
+            socket.on('all_players_ready', function() {
+                statusMessage.textContent = 'All players are ready! Game will start soon.';
+                startGameBtn.classList.remove('hidden');
+            });
+
+            // Handle game start event
+            socket.on('new_question', function() {
+                window.location.href = '/quiz';
+            });
+            
+            // Handle join form submission
+            joinForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const playerIdSelect = document.getElementById('player-id');
+                const playerId = playerIdSelect.value;
+                
+                if (!playerId) {
+                    joinMessage.textContent = 'Please select a player ID';
+                    joinMessage.className = 'message error';
+                    return;
+                }
+                
+                socket.emit('join_game', { player_id: playerId });
+                joinMessage.textContent = 'Joining game...';
+                joinMessage.className = 'message info';
+            });
+            
+            // Handle start game button
+            startGameBtn.addEventListener('click', function() {
+                socket.emit('start_game', {});
+                statusMessage.textContent = 'Starting game...';
+                startGameBtn.disabled = true;
+            });
+            
+            // Function to update player list
+            function updatePlayerList() {
+                playerList.innerHTML = '';
+                
+                if (connectedPlayers.length === 0) {
+                    playerList.innerHTML = '<div class="no-players">No players have joined yet</div>';
+                    return;
+                }
+                
+                connectedPlayers.forEach(function(playerId) {
+                    const playerItem = document.createElement('div');
+                    playerItem.className = 'player-item';
+                    playerItem.textContent = playerId;
+                    playerList.appendChild(playerItem);
+                });
+            }
+            
+            // Initialize player list
+            updatePlayerList();
+        });
+    </script>
+</body>
+</html>
