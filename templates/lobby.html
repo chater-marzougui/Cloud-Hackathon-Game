@@ -32,7 +32,7 @@
             </div>
 
             <div class="waiting-area">
-                <h3>Players Waiting (0/10)</h3>
+                <h3>Players Waiting (0/{{ valid_players|length }})</h3>
                 <div class="player-list" id="player-list">
                     <!-- Players will be displayed here -->
                 </div>
@@ -47,7 +47,7 @@
         <div class="game-rules">
             <h3>Game Rules</h3>
             <ul>
-                <li>10 players (excluding INDP2C)</li>
+                <li>{{ valid_players|length }} players (excluding INDP2C)</li>
                 <li>45 questions, shown one at a time</li>
                 <li>First to answer correctly gets +1 point</li>
                 <li>Wrong answers: <strong>-2 points</strong></li>
@@ -68,16 +68,36 @@
             const statusMessage = document.getElementById('status-message');
             
             let connectedPlayers = [];
+            let selectedPlayerId = '';
             const validPlayers = {{ valid_players|tojson }};
             const totalPlayers = validPlayers.length;
 
+            // Check if game is already in progress
+            fetch('/api/game-status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.game_started) {
+                        statusMessage.textContent = 'Game already in progress. Join now to participate!';
+                    }
+                })
+                .catch(error => console.error('Error checking game status:', error));
+
             // Handle socket connection
             socket.on('connect', function() {
-                console.log('Connected to server');
+                console.log('Connected to server:', socket.id);
+                
+                // If player was previously selected, try to rejoin
+                const savedPlayerId = localStorage.getItem('selectedPlayerId');
+                if (savedPlayerId) {
+                    document.getElementById('player-id').value = savedPlayerId;
+                    console.log('Attempting to reconnect as player:', savedPlayerId);
+                    socket.emit('join_game', { player_id: savedPlayerId });
+                }
             });
 
             // Handle player joined event
             socket.on('player_joined', function(data) {
+                console.log('Player joined event received:', data);
                 connectedPlayers = data.players;
                 updatePlayerList();
                 
@@ -88,47 +108,115 @@
                     statusMessage.textContent = 'All players have joined! Ready to start.';
                     startGameBtn.classList.remove('hidden');
                 }
+                
+                // If the player who joined is our player, update UI accordingly
+                if (data.player_id === selectedPlayerId) {
+                    joinMessage.textContent = 'Successfully joined the game!';
+                    joinMessage.className = 'message success';
+                    
+                    // Store in localStorage for reconnection
+                    localStorage.setItem('selectedPlayerId', selectedPlayerId);
+                    
+                    // Ensure player is also set in session
+                    fetch(`/set-player/${selectedPlayerId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('Set player in session:', data);
+                        })
+                        .catch(error => console.error('Error setting player:', error));
+                }
+            });
+
+            // Handle player left event
+            socket.on('player_left', function(data) {
+                console.log('Player left event received:', data);
+                connectedPlayers = data.players;
+                updatePlayerList();
+                
+                // Update the player count
+                playerCountHeader.textContent = `Players Waiting (${connectedPlayers.length}/${totalPlayers})`;
             });
 
             // Handle join error
             socket.on('join_error', function(data) {
+                console.log('Join error:', data);
                 joinMessage.textContent = data.message;
                 joinMessage.className = 'message error';
             });
 
             // Handle all players ready
             socket.on('all_players_ready', function() {
+                console.log('All players ready event received');
                 statusMessage.textContent = 'All players are ready! Game will start soon.';
                 startGameBtn.classList.remove('hidden');
             });
 
-            // Handle game start event
-            socket.on('new_question', function() {
+            // Handle game starting event
+            socket.on('game_starting', function(data) {
+                console.log('Game starting event received:', data);
+                statusMessage.textContent = data.message || 'Game is starting!';
+                startGameBtn.classList.add('hidden');
+                
+                // Set a flag that we're expecting to transition to the game
+                localStorage.setItem('gameStarting', 'true');
+            });
+
+            // Handle new question event - this is the key event for transition to game
+            socket.on('new_question', function(data) {
+                console.log('New question event received, redirecting to quiz:', data);
+                
+                // Store that we're in a game
+                localStorage.setItem('gameInProgress', 'true');
+                localStorage.setItem('lastQuestionNumber', data.question_number);
+                
+                // Redirect to quiz page
                 window.location.href = '/quiz';
+            });
+            
+            // Handle game reset
+            socket.on('game_reset', function() {
+                console.log('Game reset event received');
+                statusMessage.textContent = 'Game has been reset. Waiting for players to join.';
+                startGameBtn.classList.add('hidden');
+                
+                // Clear game-related localStorage
+                localStorage.removeItem('gameInProgress');
+                localStorage.removeItem('gameStarting');
+            });
+            
+            // Handle error
+            socket.on('error', function(data) {
+                console.error('Socket error:', data);
+                joinMessage.textContent = data.message;
+                joinMessage.className = 'message error';
             });
             
             // Handle join form submission
             joinForm.addEventListener('submit', function(e) {
                 e.preventDefault();
                 const playerIdSelect = document.getElementById('player-id');
-                const playerId = playerIdSelect.value;
+                selectedPlayerId = playerIdSelect.value;
                 
-                if (!playerId) {
+                if (!selectedPlayerId) {
                     joinMessage.textContent = 'Please select a player ID';
                     joinMessage.className = 'message error';
                     return;
                 }
                 
-                socket.emit('join_game', { player_id: playerId });
+                console.log('Attempting to join as:', selectedPlayerId);
                 joinMessage.textContent = 'Joining game...';
                 joinMessage.className = 'message info';
+                
+                socket.emit('join_game', { player_id: selectedPlayerId });
             });
             
             // Handle start game button
             startGameBtn.addEventListener('click', function() {
-                socket.emit('start_game', {});
+                console.log('Start game button clicked');
                 statusMessage.textContent = 'Starting game...';
                 startGameBtn.disabled = true;
+                
+                socket.emit('start_game', {});
             });
             
             // Function to update player list
@@ -143,9 +231,31 @@
                 connectedPlayers.forEach(function(playerId) {
                     const playerItem = document.createElement('div');
                     playerItem.className = 'player-item';
+                    
+                    // Highlight the current player
+                    if (playerId === selectedPlayerId) {
+                        playerItem.classList.add('current-player');
+                    }
+                    
                     playerItem.textContent = playerId;
                     playerList.appendChild(playerItem);
                 });
+            }
+            
+            // Check for "gameStarting" flag on page load
+            if (localStorage.getItem('gameStarting') === 'true') {
+                statusMessage.textContent = 'Game is starting! Please wait...';
+                // Clear the flag to avoid issues on reload
+                localStorage.removeItem('gameStarting');
+            }
+            
+            // Check for "gameInProgress" flag on page load
+            if (localStorage.getItem('gameInProgress') === 'true') {
+                statusMessage.textContent = 'Game is in progress. Redirecting to quiz...';
+                // Give a short delay for UI update before redirect
+                setTimeout(() => {
+                    window.location.href = '/quiz';
+                }, 1000);
             }
             
             // Initialize player list

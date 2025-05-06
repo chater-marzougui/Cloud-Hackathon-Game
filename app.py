@@ -59,9 +59,37 @@ def player_info():
         'score': game_state.get_player_score(player_id)
     })
 
+# New route to set player ID in session
+@app.route('/set-player/<player_id>')
+def set_player(player_id):
+    if player_id in VALID_PLAYERS:
+        session['player_id'] = player_id
+        return jsonify({'success': True})
+    return jsonify({'success': False}), 400
+
+# New route to check game status
+@app.route('/api/game-status')
+def game_status():
+    return jsonify({
+        'game_started': game_state.game_started,
+        'current_question': game_state.current_question_index + 1 if game_state.game_started else 0
+    })
+
 @socketio.on('connect')
 def handle_connect():
     print(f"Client connected: {request.sid}")
+    
+    # Check if there's a player_id in the session
+    player_id = session.get('player_id')
+    if player_id and player_id in VALID_PLAYERS:
+        print(f"Reconnecting player {player_id} with socket {request.sid}")
+        # Re-associate this socket with the player
+        game_state.add_player(player_id, request.sid)
+        join_room(player_id)
+        
+        # If game is already in progress, send current question to this player
+        if game_state.game_started:
+            send_question_to_player(player_id)
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -74,6 +102,7 @@ def handle_disconnect():
             break
     
     if player_id:
+        print(f"Player {player_id} disconnected")
         game_state.remove_player(player_id)
         emit('player_left', {
             'player_id': player_id,
@@ -113,6 +142,7 @@ def handle_join(data):
     # Add player to game state
     game_state.add_player(player_id, request.sid)
     session['player_id'] = player_id
+    print(f"Player {player_id} joined with socket {request.sid}")
     
     # Join a room with the player's ID for direct messaging
     join_room(player_id)
@@ -126,6 +156,10 @@ def handle_join(data):
     # Check if all expected players have joined
     if len(game_state.players) == len(VALID_PLAYERS):
         emit('all_players_ready', broadcast=True)
+    
+    # If game is already in progress, send current question to this player
+    if game_state.game_started:
+        send_question_to_player(player_id)
 
 @socketio.on('start_game')
 def handle_start_game(data):
@@ -145,7 +179,14 @@ def handle_start_game(data):
         emit('error', {'message': 'Need at least 2 players to start'})
         return
     
+    # Start the game
     game_state.start_game()
+    print(f"Game started by {request.sid}")
+    
+    # Explicitly notify all clients that game is starting
+    emit('game_starting', {'message': 'Game is starting!'}, broadcast=True)
+    
+    # Send the first question
     send_next_question()
 
 @socketio.on('submit_answer')
@@ -234,6 +275,21 @@ def admin_reset_game(data):
         emit('game_reset', broadcast=True)
         emit('admin_log', {'message': 'Admin reset the game'}, broadcast=True)
 
+def send_question_to_player(player_id):
+    """Send the current question to a specific player"""
+    current_q = game_state.get_current_question()
+    if current_q:
+        socket_id = game_state.get_player_socket_id(player_id)
+        if socket_id:
+            question_data = {
+                'question_number': game_state.current_question_index + 1,
+                'question': current_q['question'],
+                'options': current_q.get('options', []),
+                'total_questions': len(questions)
+            }
+            print(f"Sending current question #{game_state.current_question_index + 1} to {player_id}")
+            emit('new_question', question_data, room=player_id)
+
 def send_next_question():
     """Send the next question to all players"""
     has_next = game_state.move_to_next_question()
@@ -241,6 +297,11 @@ def send_next_question():
     if has_next:
         current_q = game_state.get_current_question()
         if current_q:
+            # Log which players are receiving questions
+            print(f"Sending question #{game_state.current_question_index + 1} to {len(game_state.players)} players")
+            for player_id in game_state.players.keys():
+                print(f"  - {player_id} (socket: {game_state.players[player_id]})")
+            
             # Send just the question and options, not the answer
             question_data = {
                 'question_number': game_state.current_question_index + 1,
