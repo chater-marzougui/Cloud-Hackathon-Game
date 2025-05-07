@@ -23,7 +23,8 @@ VALID_PLAYERS = [
     # 'INDP2C1', 'INDP2C2',
     'INDP2D1', 'INDP2D2',
     'INDP2E1', 'INDP2E2',
-    'INDP2F1', 'INDP2F2'
+    'INDP2F1', 'INDP2F2',
+    'MmeASMA', 'MmeABIR',
 ]
 
 # Admin configuration
