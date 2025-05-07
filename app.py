@@ -19,10 +19,11 @@ game_state = GameState(questions)
 # Valid player IDs (excluding INDP2C players as requested)
 VALID_PLAYERS = [
     'INDP2A1', 'INDP2A2', 
-    # 'INDP2B1', 'INDP2B2', 
-    # 'INDP2D1', 'INDP2D2',
-    # 'INDP2E1', 'INDP2E2',
-    # 'INDP2F1', 'INDP2F2'
+    'INDP2B1', 'INDP2B2',
+    # 'INDP2C1', 'INDP2C2',
+    'INDP2D1', 'INDP2D2',
+    'INDP2E1', 'INDP2E2',
+    'INDP2F1', 'INDP2F2'
 ]
 
 # Admin configuration
@@ -58,6 +59,31 @@ def player_info():
         'player_id': player_id,
         'score': game_state.get_player_score(player_id)
     })
+
+
+@socketio.on('chat_message')
+def handle_chat_message(data):
+    """Handle incoming chat messages from players"""
+    player_id = session.get('player_id')
+    if not player_id or player_id not in VALID_PLAYERS:
+        emit('error', {'message': 'Invalid player'})
+        return
+    
+    message = data.get('message')
+    if not message or not isinstance(message, str):
+        return
+    
+    # Sanitize the message (basic)
+    message = message.strip()
+    if not message or len(message) > 500:  # Limit message length
+        return
+    
+    # Broadcast the message to all players
+    emit('chat_message', {
+        'sender': player_id,
+        'message': message,
+        'timestamp': time.time()
+    }, broadcast=True)
 
 # New route to set player ID in session
 @app.route('/set-player/<player_id>')
